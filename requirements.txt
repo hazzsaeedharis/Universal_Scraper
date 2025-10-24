@@ -1,0 +1,39 @@
+# Web Framework
+fastapi
+uvicorn[standard]
+python-multipart
+
+# HTTP & Web Scraping
+httpx
+beautifulsoup4
+lxml
+playwright
+urllib3
+
+# AI & Embeddings
+groq
+sentence-transformers
+torch
+
+# Vector Database
+pinecone
+
+# Database
+sqlalchemy
+aiosqlite
+
+# Background Tasks
+python-jose[cryptography]
+passlib[bcrypt]
+
+# Utilities
+python-dotenv
+pydantic
+pydantic-settings
+aiofiles
+
+# Development
+pytest
+pytest-asyncio
+black
+

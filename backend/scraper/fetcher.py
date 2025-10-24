@@ -1,0 +1,172 @@
+"""
+HTTP fetcher with retry logic, rate limiting, and robots.txt compliance.
+"""
+import asyncio
+from typing import Optional, Dict
+from urllib.parse import urlparse
+import httpx
+from urllib.robotparser import RobotFileParser
+
+from ..config import get_settings
+from ..utils.logger import setup_logger
+
+logger = setup_logger(__name__)
+
+
+class Fetcher:
+    """Async HTTP client with intelligent fetching."""
+    
+    def __init__(self):
+        """Initialize the fetcher."""
+        settings = get_settings()
+        self.timeout = settings.request_timeout
+        self.user_agent = settings.user_agent
+        self.rate_limit_delay = settings.rate_limit_delay
+        self.robots_cache: Dict[str, RobotFileParser] = {}
+        
+        # Create HTTP client
+        self.client = httpx.AsyncClient(
+            timeout=self.timeout,
+            follow_redirects=True,
+            headers={"User-Agent": self.user_agent}
+        )
+    
+    async def close(self):
+        """Close the HTTP client."""
+        await self.client.aclose()
+    
+    def _get_robots_url(self, url: str) -> str:
+        """Get robots.txt URL for a given URL."""
+        parsed = urlparse(url)
+        return f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+    
+    async def _get_robots_parser(self, domain: str) -> Optional[RobotFileParser]:
+        """Get or fetch robots.txt parser for a domain."""
+        if domain in self.robots_cache:
+            return self.robots_cache[domain]
+        
+        robots_url = f"https://{domain}/robots.txt"
+        parser = RobotFileParser()
+        parser.set_url(robots_url)
+        
+        try:
+            response = await self.client.get(robots_url)
+            if response.status_code == 200:
+                # Parse robots.txt content
+                lines = response.text.split('\n')
+                parser.parse(lines)
+                self.robots_cache[domain] = parser
+                logger.info(f"Loaded robots.txt for {domain}")
+                return parser
+        except Exception as e:
+            logger.warning(f"Could not fetch robots.txt for {domain}: {e}")
+        
+        # Cache empty parser to avoid repeated requests
+        self.robots_cache[domain] = None
+        return None
+    
+    async def can_fetch(self, url: str) -> bool:
+        """
+        Check if URL can be fetched according to robots.txt.
+        
+        Args:
+            url: URL to check
+            
+        Returns:
+            True if allowed, False otherwise
+        """
+        parsed = urlparse(url)
+        domain = parsed.netloc
+        
+        parser = await self._get_robots_parser(domain)
+        if parser is None:
+            # No robots.txt or error fetching it, allow by default
+            return True
+        
+        return parser.can_fetch(self.user_agent, url)
+    
+    async def fetch(
+        self,
+        url: str,
+        retry_count: int = 3,
+        respect_robots: bool = True
+    ) -> Optional[Dict[str, any]]:
+        """
+        Fetch a URL with retry logic.
+        
+        Args:
+            url: URL to fetch
+            retry_count: Number of retries on failure
+            respect_robots: Whether to respect robots.txt
+            
+        Returns:
+            Dictionary with status_code, content, headers, or None on failure
+        """
+        # Check robots.txt
+        if respect_robots:
+            if not await self.can_fetch(url):
+                logger.info(f"Robots.txt disallows fetching: {url}")
+                return None
+        
+        # Rate limiting
+        await asyncio.sleep(self.rate_limit_delay)
+        
+        # Attempt to fetch with retries
+        for attempt in range(retry_count):
+            try:
+                response = await self.client.get(url)
+                
+                if response.status_code == 200:
+                    return {
+                        "status_code": response.status_code,
+                        "content": response.text,
+                        "headers": dict(response.headers),
+                        "url": str(response.url)  # Final URL after redirects
+                    }
+                else:
+                    logger.warning(f"HTTP {response.status_code} for {url}")
+                    if response.status_code in [404, 403, 401]:
+                        # Don't retry for these status codes
+                        return None
+                    
+            except httpx.TimeoutException:
+                logger.warning(f"Timeout fetching {url} (attempt {attempt + 1}/{retry_count})")
+            except httpx.RequestError as e:
+                logger.warning(f"Request error for {url}: {e} (attempt {attempt + 1}/{retry_count})")
+            except Exception as e:
+                logger.error(f"Unexpected error fetching {url}: {e}")
+                return None
+            
+            # Wait before retry (exponential backoff)
+            if attempt < retry_count - 1:
+                await asyncio.sleep(2 ** attempt)
+        
+        logger.error(f"Failed to fetch {url} after {retry_count} attempts")
+        return None
+    
+    async def fetch_multiple(
+        self,
+        urls: list,
+        max_concurrent: int = 5
+    ) -> Dict[str, Optional[Dict]]:
+        """
+        Fetch multiple URLs concurrently.
+        
+        Args:
+            urls: List of URLs to fetch
+            max_concurrent: Maximum concurrent requests
+            
+        Returns:
+            Dictionary mapping URLs to fetch results
+        """
+        semaphore = asyncio.Semaphore(max_concurrent)
+        
+        async def fetch_with_semaphore(url):
+            async with semaphore:
+                return url, await self.fetch(url)
+        
+        tasks = [fetch_with_semaphore(url) for url in urls]
+        results = await asyncio.gather(*tasks)
+        
+        return dict(results)
+
