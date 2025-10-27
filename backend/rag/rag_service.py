@@ -28,7 +28,7 @@ class RAGService:
         top_k: int = 5,
         namespace: str = "",
         filter: Optional[Dict] = None,
-        extract_structured: bool = False
+        extract_structured: bool = True
     ) -> Dict:
         """
         Generate an AI answer for a query using RAG.
