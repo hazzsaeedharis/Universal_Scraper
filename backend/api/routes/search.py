@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 import time
 
 from ..schemas import SearchRequest, SearchResponse, SearchResult
-from ...rag import Retriever
+from ...rag import Retriever, RAGService
 from ...storage import get_db
 from ...utils.logger import setup_logger
 
@@ -66,5 +66,37 @@ async def get_search_history(limit: int = 10):
         }
     except Exception as e:
         logger.error(f"Error fetching search history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ai-answer")
+async def ai_answer(request: SearchRequest):
+    """
+    Get an AI-powered answer using RAG (Retrieval-Augmented Generation).
+    Retrieves relevant content and generates a natural language answer.
+    """
+    try:
+        # Initialize RAG service
+        rag_service = RAGService()
+        
+        # Generate answer
+        result = await rag_service.answer_query(
+            query=request.query,
+            top_k=request.top_k,
+            namespace=request.namespace
+        )
+        
+        # Log search query
+        db = get_db()
+        await db.log_search_query(
+            query_text=request.query,
+            results_count=len(result['sources']),
+            response_time_ms=result['response_time_ms']
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"AI answer error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

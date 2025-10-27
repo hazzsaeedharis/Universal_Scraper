@@ -80,13 +80,8 @@ export default function JobMonitor() {
     
     const websocket = new WebSocket(wsUrl)
     
-    websocket.onopen = () => {
-      console.log('WebSocket connected for job', selectedJobId)
-    }
-    
     websocket.onmessage = (event) => {
       const data = JSON.parse(event.data)
-      console.log('WebSocket message:', data)
       setWsData(data)
       
       // Refetch data on updates
@@ -101,10 +96,6 @@ export default function JobMonitor() {
     
     websocket.onerror = (error) => {
       console.error('WebSocket error:', error)
-    }
-    
-    websocket.onclose = () => {
-      console.log('WebSocket disconnected')
     }
     
     setWs(websocket)

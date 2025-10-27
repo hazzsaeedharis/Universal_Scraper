@@ -229,6 +229,49 @@ class MetadataDB:
             )
             return list(result.scalars().all())
     
+    async def update_job_name(
+        self,
+        job_id: int,
+        name: str
+    ):
+        """Update job name."""
+        async with self.get_session() as session:
+            await session.execute(
+                update(ScrapeJob)
+                .where(ScrapeJob.id == job_id)
+                .values(name=name)
+            )
+            logger.info(f"Updated job {job_id} name to: {name}")
+    
+    async def update_job_chunks(
+        self,
+        job_id: int,
+        total_chunks: int
+    ):
+        """Update total chunks for a job."""
+        async with self.get_session() as session:
+            await session.execute(
+                update(ScrapeJob)
+                .where(ScrapeJob.id == job_id)
+                .values(total_chunks=total_chunks)
+            )
+    
+    async def mark_url_as_embedded(
+        self,
+        url_id: int,
+        chunks_generated: int
+    ):
+        """Mark a URL as embedded with chunk count."""
+        async with self.get_session() as session:
+            await session.execute(
+                update(ScrapedURL)
+                .where(ScrapedURL.id == url_id)
+                .values(
+                    chunks_generated=chunks_generated,
+                    embedded=1
+                )
+            )
+    
     async def close(self):
         """Close database connections."""
         await self.engine.dispose()

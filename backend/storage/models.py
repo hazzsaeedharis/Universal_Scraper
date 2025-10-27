@@ -35,6 +35,7 @@ class ScrapeJob(Base):
     status = Column(SQLEnum(JobStatus), default=JobStatus.PENDING, nullable=False)
     
     # Job details
+    name = Column(String(255), nullable=True)  # Custom job name
     query = Column(Text, nullable=True)  # For smart scraping
     start_url = Column(String(500), nullable=True)  # For direct scraping
     
