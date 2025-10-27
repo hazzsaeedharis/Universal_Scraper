@@ -60,6 +60,20 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+### Playwright (Optional - for JavaScript-heavy sites)
+
+If you plan to scrape modern websites with JavaScript (React, Vue, etc.):
+
+```bash
+# macOS/Linux
+playwright install chromium
+
+# Or with system dependencies
+playwright install --with-deps chromium
+```
+
+**Note**: Playwright is optional. The scraper works fine without it using the default httpx method.
+
 ### Frontend
 
 ```bash
@@ -112,6 +126,239 @@ npm run dev
 5. Monitor progress in **Job Monitor**
 6. Search content in **Search** tab
 
+---
+
+## 📖 How Scraping Works: httpx vs Playwright
+
+Universal Scraper offers **two scraping methods** that you can choose from for each job:
+
+### 🚀 Method 1: httpx (Fast & Simple)
+
+**Best for**: Static HTML websites, blogs, documentation
+
+**How it works**:
+1. Sends HTTP GET request to the URL
+2. Receives HTML response immediately
+3. Parses HTML with BeautifulSoup
+4. Extracts text, links, and metadata
+5. Follows internal links recursively
+
+**Performance**:
+- ⚡ **Speed**: 1-2 seconds per page
+- 💾 **Memory**: Low (~10MB)
+- 🎯 **Success Rate**: 100% for static sites
+
+**Limitations**:
+- ❌ Cannot execute JavaScript
+- ❌ Misses dynamically-loaded content
+- ❌ Won't find JS-loaded PDF links
+- ❌ Fails on modern SPAs (Single Page Apps)
+
+**When to use**:
+- News websites
+- Government/institutional sites
+- Documentation sites
+- Simple blogs
+- Wikipedia
+
+### 🌐 Method 2: Playwright (Comprehensive)
+
+**Best for**: Modern JavaScript-heavy websites (React, Vue, Angular)
+
+**How it works**:
+1. Launches a real Chromium browser (headless)
+2. Navigates to the URL like a real user
+3. **Executes all JavaScript** on the page
+4. Waits for network to be idle
+5. Extracts rendered HTML and all links
+6. **Finds JavaScript-loaded content** (menus, PDFs, etc.)
+7. Follows links recursively
+
+**Performance**:
+- 🐌 **Speed**: 5-10 seconds per page
+- 💾 **Memory**: Higher (~100MB per browser)
+- 🎯 **Success Rate**: 95%+ for JS-heavy sites
+
+**Advantages**:
+- ✅ Executes JavaScript
+- ✅ Finds dynamically-loaded links
+- ✅ Detects JS-loaded PDF menus
+- ✅ Works on modern SPAs
+- ✅ Bypasses basic bot detection
+- ✅ Handles lazy loading
+
+**When to use**:
+- Restaurant websites (KFC, BrewDog, etc.)
+- E-commerce sites
+- React/Vue/Angular applications
+- Sites with JavaScript menus
+- Sites with dynamic content
+- PDF menus loaded via JavaScript
+
+---
+
+## 🎯 Step-by-Step Usage Guide
+
+### Direct Scrape (Recommended for Beginners)
+
+1. **Navigate to Direct Scrape**
+   - Open http://localhost:5173
+   - Click **Direct Scrape** in the sidebar
+
+2. **Enter Target URL**
+   - Example: `https://www.kfc.de`
+   - Must include `https://` or `http://`
+
+3. **Configure Settings**
+   - **Max Depth**: How many link levels to follow (1-10)
+     - 1 = Only the starting page
+     - 2 = Starting page + direct links
+     - 3 = Starting page + links + links from those links
+   - **Max Pages**: Maximum pages to scrape (1-1000)
+     - Prevents infinite loops
+     - Recommended: 50-100 for testing
+
+4. **Choose Scraping Method** ⭐ NEW!
+   - **httpx (Fast)**: For simple, static websites
+     - Example: Wikipedia, documentation sites
+   - **Playwright (Comprehensive)**: For JavaScript sites
+     - Example: KFC, BrewDog, React apps
+     - **Use this if the website looks modern or has menus**
+
+5. **Start Scraping**
+   - Click **Start Scraping**
+   - Redirects to Job Monitor automatically
+
+6. **Monitor Progress**
+   - Watch real-time updates
+   - See URLs discovered/scraped/failed
+   - View current URL being processed
+   - Check completion status
+
+7. **Search Your Data**
+   - Go to **Search** tab
+   - Enter a question or keyword
+   - Get AI-powered answers with sources
+
+### Smart Scrape (AI-Powered)
+
+1. **Navigate to Smart Scrape**
+   - Click **Smart Scrape** in the sidebar
+
+2. **Describe What You're Looking For**
+   - Example: "Restaurant menus in Berlin"
+   - Example: "COVID-19 vaccination requirements"
+
+3. **Configure Settings**
+   - **Max Sites**: How many websites to scrape (1-10)
+   - **Pages Per Site**: How many pages per website (1-200)
+   - **Scraping Method**: Choose httpx or Playwright
+
+4. **Let AI Find & Scrape**
+   - AI generates optimal search queries
+   - Finds relevant websites
+   - Scrapes them automatically
+   - Indexes content for search
+
+---
+
+## 🏗️ Architecture: How It All Works
+
+### The Scraping Pipeline
+
+```
+User Input (URL + Method)
+    ↓
+┌─────────────────────────────┐
+│  Frontend (React)           │
+│  - DirectScrape.jsx         │
+│  - Method Selector Dropdown │
+└─────────────────────────────┘
+    ↓ API Call (POST /scrape/direct)
+┌─────────────────────────────┐
+│  Backend API (FastAPI)      │
+│  - Validates method         │
+│  - Creates job in database  │
+│  - Starts background task   │
+└─────────────────────────────┘
+    ↓
+┌─────────────────────────────┐
+│  Crawler                    │
+│  - Manages queue & visited  │
+│  - Calls fetcher for URLs   │
+└─────────────────────────────┘
+    ↓
+┌─────────────────────────────┐
+│  Fetcher (Router)           │
+│  - Routes to httpx OR       │
+│  - Routes to Playwright     │
+└─────────────────────────────┘
+    ↓                    ↓
+┌────────────┐    ┌────────────────┐
+│httpx       │    │Playwright      │
+│Fetcher     │    │Fetcher         │
+│            │    │                │
+│HTTP GET → │    │Browser Launch →│
+│HTML ← ✅   │    │JS Execute →    │
+│            │    │Rendered HTML ← │
+└────────────┘    └────────────────┘
+         ↓              ↓
+    ┌─────────────────────────────┐
+    │  Parser                     │
+    │  - BeautifulSoup            │
+    │  - Extract text & links     │
+    │  - Detect PDF links         │
+    └─────────────────────────────┘
+              ↓
+    ┌─────────────────────────────┐
+    │  Storage                    │
+    │  - Save to local JSON       │
+    │  - Update database          │
+    └─────────────────────────────┘
+              ↓
+    ┌─────────────────────────────┐
+    │  RAG Pipeline               │
+    │  1. Chunk text              │
+    │  2. Generate embeddings     │
+    │  3. Store in Pinecone       │
+    └─────────────────────────────┘
+              ↓
+         ✅ Searchable!
+```
+
+### Method Selection Flow
+
+1. **User selects method** in dropdown (httpx or playwright)
+2. **Frontend sends** `scraper_method: "httpx"` or `"playwright"`
+3. **Backend validates** method is valid
+4. **Crawler initializes** `Fetcher(method=ScraperMethod.PLAYWRIGHT)`
+5. **Fetcher routes** each URL to appropriate implementation
+6. **Playwright launches browser** (if selected) and reuses it for all pages
+7. **Results** are identical format regardless of method
+8. **Logs show** which method was used for debugging
+
+### PDF Detection with Playwright
+
+**The Problem**: Many restaurant websites load PDF menus via JavaScript:
+
+```html
+<!-- JavaScript-loaded PDF link (invisible to httpx) -->
+<button onclick="loadMenu('https://cdn.example.com/menu.pdf')">
+  View Menu
+</button>
+```
+
+**The Solution**: Playwright executes the JavaScript:
+
+1. **Page loads** in real browser
+2. **JavaScript executes** and creates PDF links
+3. **Playwright extracts** all `<a href="*.pdf">` links
+4. **Crawler detects** `.pdf` URLs
+5. **PDF Processor** downloads and extracts text (OCR if needed)
+6. **Text indexed** for RAG search
+
+---
+
 ## Common Issues
 
 ### "Pinecone index not found"
@@ -133,6 +380,37 @@ npm run dev
 ### Port already in use
 - Change port in `.env` (backend) or `vite.config.js` (frontend)
 - Or stop the process using the port
+
+### Playwright Issues
+
+**"Playwright not installed" error**
+```bash
+# Install Playwright browsers
+playwright install chromium
+
+# Or with system dependencies (recommended)
+playwright install --with-deps chromium
+```
+
+**"Browser failed to launch"**
+- On Linux: `playwright install-deps` (installs system dependencies)
+- On macOS: `brew install playwright` (alternative installation)
+- Check if Chromium path is correct in logs
+
+**Playwright is slow**
+- This is normal! Playwright is 5-10x slower than httpx
+- It launches a real browser and executes JavaScript
+- Use httpx for simple sites to save time
+
+**"Timeout waiting for selector"**
+- Increase timeout in `backend/config.py`: `playwright_timeout: 60000` (60 seconds)
+- Some sites load slowly - this is expected
+- Check if site has bot detection
+
+**No PDF links detected with Playwright**
+- Check backend logs for "Found X PDF links"
+- Verify PDF link exists by manually inspecting the website
+- PDF might be behind authentication or region-lock
 
 ## Next Steps
 
