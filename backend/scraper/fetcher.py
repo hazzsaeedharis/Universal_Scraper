@@ -38,27 +38,30 @@ class Fetcher:
         self.rate_limit_delay = settings.rate_limit_delay
         self.robots_cache: Dict[str, RobotFileParser] = {}
         
-        # Initialize based on method
+        # Always create an httpx client (needed for file downloads even with Playwright)
+        self.client = httpx.AsyncClient(
+            timeout=self.timeout,
+            follow_redirects=True,
+            headers={"User-Agent": self.user_agent}
+        )
+        
+        # Initialize Playwright if using that method
         if method == ScraperMethod.PLAYWRIGHT:
             from .playwright_fetcher import PlaywrightFetcher
             self.playwright_fetcher = PlaywrightFetcher()
-            self.client = None
-            logger.info("Fetcher initialized with Playwright method")
+            logger.info("Fetcher initialized with Playwright method (httpx available for downloads)")
         else:
-            # Create HTTP client for httpx method
-            self.client = httpx.AsyncClient(
-                timeout=self.timeout,
-                follow_redirects=True,
-                headers={"User-Agent": self.user_agent}
-            )
             self.playwright_fetcher = None
             logger.info("Fetcher initialized with httpx method")
     
     async def close(self):
-        """Close the HTTP client or Playwright browser."""
+        """Close the HTTP client and/or Playwright browser."""
+        # Close Playwright if initialized
         if self.method == ScraperMethod.PLAYWRIGHT and self.playwright_fetcher:
             await self.playwright_fetcher.close()
-        elif self.client:
+        
+        # Always close httpx client (used by both methods)
+        if self.client:
             await self.client.aclose()
     
     def _get_robots_url(self, url: str) -> str:
