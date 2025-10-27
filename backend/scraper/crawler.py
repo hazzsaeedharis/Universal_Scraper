@@ -206,9 +206,10 @@ class Crawler:
         temp_path = os.path.join(tempfile.gettempdir(), f"pdf_{url_hash}.pdf")
         
         try:
-            # Download PDF
-            success = await self.fetcher.download_file(url, temp_path)
+            # Download PDF (skip robots.txt check for public PDFs)
+            success = await self.fetcher.download_file(url, temp_path, respect_robots=False)
             if not success:
+                logger.error(f"Failed to download PDF from {url}")
                 self.failed.append({"url": url, "error": "Download failed", "depth": depth})
                 return None
             
