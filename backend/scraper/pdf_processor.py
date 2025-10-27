@@ -410,65 +410,177 @@ Be thorough and precise."""
         logger.info(f"Text extraction looks good ({avg_chars_per_page:.0f} chars/page)")
         return True
     
-    def extract_full_text(self, pdf_path: str) -> str:
+    def _merge_extraction_results(self, vision_text: str, ocr_text: str) -> str:
         """
-        Extract all text from PDF as a single string.
-        Smart extraction: tries text methods first, vision API for scanned PDFs.
+        Intelligently merge vision and OCR extraction results.
         
-        Strategy:
-        1. Try pdfplumber/PyPDF2 (fast, free)
-        2. If text extraction is poor quality → use vision API
-        3. OCR as final fallback (if vision unavailable)
+        Args:
+            vision_text: Text from vision API (structured, high quality)
+            ocr_text: Text from OCR (may have extra details)
+            
+        Returns:
+            Combined text optimized for RAG
+        """
+        if not vision_text and not ocr_text:
+            return ""
+        
+        if not vision_text:
+            return ocr_text
+        
+        if not ocr_text:
+            return vision_text
+        
+        # Combine both with clear sections
+        combined = f"""=== VISION API EXTRACTION (Structured) ===
+{vision_text}
+
+=== OCR EXTRACTION (Additional Details) ===
+{ocr_text}
+
+=== COMBINED FOR RAG ===
+This document was processed with both vision AI and OCR for maximum accuracy.
+Vision extraction provides structured layout and formatting.
+OCR extraction may contain additional text details.
+"""
+        
+        logger.info(f"📊 Merged results: Vision={len(vision_text)} chars, OCR={len(ocr_text)} chars, Combined={len(combined)} chars")
+        return combined
+    
+    async def _extract_parallel(self, pdf_path: str) -> tuple[str, str]:
+        """
+        Run vision and OCR extraction in parallel.
         
         Args:
             pdf_path: Path to PDF file
             
         Returns:
-            Combined text from all pages
+            Tuple of (vision_text, ocr_text)
         """
-        # Step 1: Try traditional text extraction first (fast & free)
-        logger.info("Attempting text extraction (pdfplumber/PyPDF2)...")
-        pages = self.extract_text_from_pdf(pdf_path)
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
         
-        if pages:
-            # Combine text to check quality
-            text_parts = []
-            for page in pages:
-                text_parts.append(f"--- Page {page['page_num']} ---")
-                text_parts.append(page['text'])
-                text_parts.append("")
+        async def run_vision():
+            if self.use_vision:
+                logger.info("🔍 Starting vision extraction...")
+                return self._extract_with_vision(pdf_path)
+            return ""
+        
+        async def run_ocr():
+            logger.info("📝 Starting OCR extraction...")
+            # Run OCR in thread pool (it's CPU-intensive)
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor() as pool:
+                pages = await loop.run_in_executor(pool, self.extract_text_from_pdf, pdf_path)
+                
+                if pages:
+                    text_parts = []
+                    for page in pages:
+                        text_parts.append(f"--- Page {page['page_num']} ---")
+                        text_parts.append(page['text'])
+                        text_parts.append("")
+                    return "\n".join(text_parts)
+                return ""
+        
+        # Run both in parallel
+        logger.info("⚡ Running vision API and OCR in parallel...")
+        vision_text, ocr_text = await asyncio.gather(
+            run_vision(),
+            run_ocr(),
+            return_exceptions=True
+        )
+        
+        # Handle exceptions
+        if isinstance(vision_text, Exception):
+            logger.error(f"Vision extraction error: {vision_text}")
+            vision_text = ""
+        
+        if isinstance(ocr_text, Exception):
+            logger.error(f"OCR extraction error: {ocr_text}")
+            ocr_text = ""
+        
+        return vision_text, ocr_text
+    
+    def extract_full_text(self, pdf_path: str) -> str:
+        """
+        Extract all text from PDF using BOTH vision API and OCR in parallel.
+        Combines results for maximum accuracy and detail.
+        
+        Strategy:
+        1. Run vision API and OCR simultaneously (parallel)
+        2. Merge both results intelligently
+        3. Return combined text optimized for RAG
+        
+        Args:
+            pdf_path: Path to PDF file
             
-            full_text = "\n".join(text_parts)
-            
-            # Check if text extraction was good
-            if self._is_text_extraction_good(full_text, len(pages)):
-                logger.info(f"✅ Text extraction successful: {len(pages)} pages, {len(full_text)} chars")
-                return full_text
+        Returns:
+            Combined text from all extraction methods
+        """
+        # First try simple text extraction (pdfplumber/PyPDF2)
+        logger.info("🚀 Quick check: trying pdfplumber/PyPDF2...")
+        
+        # Try pdfplumber first (fast check)
+        try:
+            with pdfplumber.open(pdf_path) as pdf:
+                first_page_text = pdf.pages[0].extract_text() if pdf.pages else ""
+                if first_page_text and len(first_page_text) > 200:
+                    # Good text-based PDF, extract all pages
+                    logger.info("✅ Text-based PDF detected, using fast extraction...")
+                    pages = self.extract_text_from_pdf(pdf_path)
+                    if pages:
+                        text_parts = []
+                        for page in pages:
+                            text_parts.append(f"--- Page {page['page_num']} ---")
+                            text_parts.append(page['text'])
+                            text_parts.append("")
+                        full_text = "\n".join(text_parts)
+                        logger.info(f"✅ Fast extraction complete: {len(full_text)} chars")
+                        return full_text
+        except Exception as e:
+            logger.warning(f"Fast extraction check failed: {e}")
+        
+        # Scanned or complex PDF - use parallel extraction
+        logger.info("📸 Scanned/complex PDF detected, using parallel extraction...")
+        
+        # Need to run async extraction
+        import asyncio
+        try:
+            # Check if we're already in an event loop
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # We're in an async context, but can't use await here
+                # Fall back to sequential
+                logger.warning("Already in event loop, using sequential extraction")
+                vision_text = self._extract_with_vision(pdf_path) if self.use_vision else ""
+                pages = self.extract_text_from_pdf(pdf_path)
+                ocr_text = ""
+                if pages:
+                    text_parts = []
+                    for page in pages:
+                        text_parts.append(f"--- Page {page['page_num']} ---")
+                        text_parts.append(page['text'])
+                        text_parts.append("")
+                    ocr_text = "\n".join(text_parts)
             else:
-                logger.warning("⚠️  Text extraction poor quality, trying vision API...")
-        else:
-            logger.warning("⚠️  Text extraction failed, trying vision API...")
+                # Create new event loop for parallel execution
+                vision_text, ocr_text = loop.run_until_complete(self._extract_parallel(pdf_path))
+        except RuntimeError:
+            # No event loop, create one
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                vision_text, ocr_text = loop.run_until_complete(self._extract_parallel(pdf_path))
+            finally:
+                loop.close()
         
-        # Step 2: Use vision API for scanned/poor quality PDFs
-        if self.use_vision:
-            logger.info("Using vision API for better extraction...")
-            vision_text = self._extract_with_vision(pdf_path)
-            if vision_text:
-                logger.info(f"✅ Vision extraction successful: {len(vision_text)} chars")
-                return vision_text
-            logger.warning("Vision extraction failed")
+        # Merge results
+        combined_text = self._merge_extraction_results(vision_text, ocr_text)
         
-        # Step 3: If we got here, return whatever text we have (even if poor quality)
-        if pages:
-            logger.warning("⚠️  Returning poor-quality text extraction (vision unavailable)")
-            text_parts = []
-            for page in pages:
-                text_parts.append(f"--- Page {page['page_num']} ---")
-                text_parts.append(page['text'])
-                text_parts.append("")
-            return "\n".join(text_parts)
+        if combined_text:
+            logger.info(f"✅ Parallel extraction complete: {len(combined_text)} total chars")
+            return combined_text
         
-        logger.error("All extraction methods failed")
+        logger.error("❌ All extraction methods failed")
         return ""
     
     def is_menu_pdf(self, text: str) -> bool:
