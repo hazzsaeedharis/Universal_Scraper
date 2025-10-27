@@ -54,7 +54,8 @@ class MetadataDB:
         self,
         job_type: JobType,
         query: Optional[str] = None,
-        start_url: Optional[str] = None
+        start_url: Optional[str] = None,
+        scraper_method: str = "httpx"
     ) -> ScrapeJob:
         """Create a new scraping job."""
         async with self.get_session() as session:
@@ -62,12 +63,13 @@ class MetadataDB:
                 job_type=job_type,
                 query=query,
                 start_url=start_url,
+                scraper_method=scraper_method,
                 status=JobStatus.PENDING
             )
             session.add(job)
             await session.flush()
             await session.refresh(job)
-            logger.info(f"Created job {job.id} of type {job_type}")
+            logger.info(f"Created job {job.id} of type {job_type} using {scraper_method} method")
             return job
     
     async def get_job(self, job_id: int) -> Optional[ScrapeJob]:

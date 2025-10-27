@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     enable_ocr: bool = True
     ocr_languages: str = "eng+deu+fra+spa"
     
+    # Playwright Configuration
+    enable_playwright: bool = True
+    playwright_timeout: int = 30000  # milliseconds
+    playwright_wait_for_selector: str = "body"
+    playwright_headless: bool = True
+    
     # Server Configuration
     host: str = "0.0.0.0"
     port: int = 8000

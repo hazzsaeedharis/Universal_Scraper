@@ -12,9 +12,10 @@ export default function SmartScrape() {
   const [query, setQuery] = useState('')
   const [maxSites, setMaxSites] = useState(3)
   const [maxPagesPerSite, setMaxPagesPerSite] = useState(50)
+  const [scraperMethod, setScraperMethod] = useState('httpx')
   
   const mutation = useMutation({
-    mutationFn: () => startSmartScrape(query, maxSites, maxPagesPerSite),
+    mutationFn: () => startSmartScrape(query, maxSites, maxPagesPerSite, scraperMethod),
     onSuccess: (data) => {
       setTimeout(() => {
         navigate(`/jobs/${data.job_id}`)
@@ -115,6 +116,25 @@ export default function SmartScrape() {
                   Max pages to scrape per site
                 </p>
               </div>
+            </div>
+            
+            {/* Scraper Method Selector */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Scraping Method</label>
+              <select
+                value={scraperMethod}
+                onChange={(e) => setScraperMethod(e.target.value)}
+                disabled={mutation.isPending}
+                className="w-full px-3 py-2 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="httpx">Fast (httpx - static HTML)</option>
+                <option value="playwright">Comprehensive (Playwright - JavaScript enabled)</option>
+              </select>
+              <p className="text-xs text-muted-foreground">
+                {scraperMethod === 'httpx' 
+                  ? 'Fast method for static websites. May miss JavaScript-loaded content.' 
+                  : 'Slower but handles modern SPAs and JavaScript-rendered content.'}
+              </p>
             </div>
             
             {/* Status Messages */}

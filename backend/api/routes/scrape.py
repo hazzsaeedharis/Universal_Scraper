@@ -10,6 +10,7 @@ from ..websocket import manager
 from ...storage import get_db, JobType, JobStatus
 from ...storage.local_store import get_local_store
 from ...scraper import Crawler
+from ...scraper.fetcher import ScraperMethod
 from ...rag import Chunker, Embedder, VectorStore
 from ...ai import SearchAgent, SiteSelector
 from ...utils.logger import setup_logger
@@ -19,10 +20,17 @@ logger = setup_logger(__name__)
 router = APIRouter(prefix="/scrape", tags=["scraping"])
 
 
-async def process_direct_scrape(job_id: int, url: str, max_depth: int, max_pages: int):
+async def process_direct_scrape(job_id: int, url: str, max_depth: int, max_pages: int, scraper_method: str = "httpx"):
     """Background task to process direct scraping."""
     db = get_db()
     local_store = get_local_store()
+    
+    # Validate and convert scraper_method
+    try:
+        method = ScraperMethod(scraper_method)
+    except ValueError:
+        logger.warning(f"Invalid scraper method '{scraper_method}', defaulting to httpx")
+        method = ScraperMethod.HTTPX
     
     try:
         # Update job status
@@ -30,6 +38,7 @@ async def process_direct_scrape(job_id: int, url: str, max_depth: int, max_pages
         await manager.broadcast_progress(job_id, "running", 0, 0, 0, url)
         
         domain = get_domain(url)
+        logger.info(f"Starting direct scrape with {method.value} method: {url}")
         
         # Progress callback
         async def on_page(page_data: Dict):
@@ -77,12 +86,13 @@ async def process_direct_scrape(job_id: int, url: str, max_depth: int, max_pages
             except Exception as e:
                 logger.error(f"Error processing page {page_data['url']}: {e}")
         
-        # Create crawler
+        # Create crawler with selected method
         crawler = Crawler(
             start_url=url,
             max_depth=max_depth,
             max_pages=max_pages,
-            on_page_callback=on_page
+            on_page_callback=on_page,
+            scraper_method=method
         )
         
         # Run crawl
@@ -196,17 +206,26 @@ async def direct_scrape(
 ):
     """
     Scrape a specific URL and follow internal links.
+    Supports both httpx (fast, static) and playwright (JavaScript-enabled) methods.
     """
     # Validate URL
     if not is_valid_url(request.url):
         raise HTTPException(status_code=400, detail="Invalid URL")
     
+    # Validate scraper method
+    scraper_method = request.scraper_method or "httpx"
+    if scraper_method not in ["httpx", "playwright"]:
+        raise HTTPException(status_code=400, detail="Invalid scraper_method. Must be 'httpx' or 'playwright'")
+    
     # Create job
     db = get_db()
     job = await db.create_job(
         job_type=JobType.DIRECT,
-        start_url=request.url
+        start_url=request.url,
+        scraper_method=scraper_method
     )
+    
+    logger.info(f"Starting direct scrape job {job.id} with {scraper_method} method")
     
     # Start background task
     background_tasks.add_task(
@@ -214,23 +233,33 @@ async def direct_scrape(
         job.id,
         request.url,
         request.max_depth,
-        request.max_pages
+        request.max_pages,
+        scraper_method
     )
     
     return JobResponse(
         job_id=job.id,
         status="pending",
-        message=f"Scraping job started for {request.url}"
+        message=f"Scraping job started for {request.url} using {scraper_method}"
     )
 
 
-async def process_smart_scrape(job_id: int, query: str, max_sites: int, max_pages_per_site: int):
+async def process_smart_scrape(job_id: int, query: str, max_sites: int, max_pages_per_site: int, scraper_method: str = "httpx"):
     """Background task for AI-powered smart scraping."""
     db = get_db()
+    
+    # Validate and convert scraper_method
+    try:
+        method = ScraperMethod(scraper_method)
+    except ValueError:
+        logger.warning(f"Invalid scraper method '{scraper_method}', defaulting to httpx")
+        method = ScraperMethod.HTTPX
     
     try:
         await db.update_job_status(job_id, JobStatus.RUNNING)
         await manager.broadcast_progress(job_id, "running", 0, 0, 0, "Analyzing query...")
+        
+        logger.info(f"Starting smart scrape with {method.value} method: {query}")
         
         # Use AI to generate search queries
         search_agent = SearchAgent()
@@ -270,13 +299,22 @@ async def smart_scrape(
 ):
     """
     AI-powered smart scraping based on natural language query.
+    Supports both httpx (fast, static) and playwright (JavaScript-enabled) methods.
     """
+    # Validate scraper method
+    scraper_method = request.scraper_method or "httpx"
+    if scraper_method not in ["httpx", "playwright"]:
+        raise HTTPException(status_code=400, detail="Invalid scraper_method. Must be 'httpx' or 'playwright'")
+    
     # Create job
     db = get_db()
     job = await db.create_job(
         job_type=JobType.SMART,
-        query=request.query
+        query=request.query,
+        scraper_method=scraper_method
     )
+    
+    logger.info(f"Starting smart scrape job {job.id} with {scraper_method} method")
     
     # Start background task
     background_tasks.add_task(
@@ -284,12 +322,13 @@ async def smart_scrape(
         job.id,
         request.query,
         request.max_sites,
-        request.max_pages_per_site
+        request.max_pages_per_site,
+        scraper_method
     )
     
     return JobResponse(
         job_id=job.id,
         status="pending",
-        message=f"Smart scraping job started for query: {request.query}"
+        message=f"Smart scraping job started for query: {request.query} using {scraper_method}"
     )
 

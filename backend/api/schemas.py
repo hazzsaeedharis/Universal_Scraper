@@ -12,6 +12,7 @@ class DirectScrapeRequest(BaseModel):
     url: str = Field(..., description="URL to scrape")
     max_depth: Optional[int] = Field(3, description="Maximum crawl depth")
     max_pages: Optional[int] = Field(100, description="Maximum pages to scrape")
+    scraper_method: Optional[str] = Field("httpx", description="Scraping method: 'httpx' or 'playwright'")
 
 
 class SmartScrapeRequest(BaseModel):
@@ -19,6 +20,7 @@ class SmartScrapeRequest(BaseModel):
     query: str = Field(..., description="Natural language query")
     max_sites: Optional[int] = Field(3, description="Maximum number of sites to scrape")
     max_pages_per_site: Optional[int] = Field(50, description="Max pages per site")
+    scraper_method: Optional[str] = Field("httpx", description="Scraping method: 'httpx' or 'playwright'")
 
 
 class JobResponse(BaseModel):

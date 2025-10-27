@@ -9,7 +9,7 @@ from typing import Set, List, Optional, Callable
 from urllib.parse import urlparse
 from collections import deque
 
-from .fetcher import Fetcher
+from .fetcher import Fetcher, ScraperMethod
 from .parser import Parser
 from .pdf_processor import PDFProcessor, PDF_SUPPORT
 from ..config import get_settings
@@ -27,7 +27,8 @@ class Crawler:
         start_url: str,
         max_depth: Optional[int] = None,
         max_pages: Optional[int] = None,
-        on_page_callback: Optional[Callable] = None
+        on_page_callback: Optional[Callable] = None,
+        scraper_method: ScraperMethod = ScraperMethod.HTTPX
     ):
         """
         Initialize the crawler.
@@ -37,6 +38,7 @@ class Crawler:
             max_depth: Maximum crawl depth (None for unlimited)
             max_pages: Maximum pages to crawl (None for unlimited)
             on_page_callback: Callback function called for each page
+            scraper_method: Scraping method to use (httpx or playwright)
         """
         settings = get_settings()
         
@@ -45,6 +47,7 @@ class Crawler:
         self.max_depth = max_depth or settings.max_depth
         self.max_pages = max_pages or 100
         self.on_page_callback = on_page_callback
+        self.scraper_method = scraper_method
         
         # State tracking
         self.visited: Set[str] = set()
@@ -52,8 +55,10 @@ class Crawler:
         self.failed: List[dict] = []
         
         # Components
-        self.fetcher = Fetcher()
+        self.fetcher = Fetcher(method=scraper_method)
         self.parser = Parser()
+        
+        logger.info(f"Crawler initialized with {scraper_method.value} method")
         
         # PDF processing (if enabled and available)
         self.pdf_enabled = settings.enable_pdf_scraping and PDF_SUPPORT

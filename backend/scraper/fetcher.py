@@ -1,9 +1,11 @@
 """
 HTTP fetcher with retry logic, rate limiting, and robots.txt compliance.
+Supports both httpx (fast, static) and Playwright (JavaScript-enabled) methods.
 """
 import asyncio
 from typing import Optional, Dict
 from urllib.parse import urlparse
+from enum import Enum
 import httpx
 from urllib.robotparser import RobotFileParser
 
@@ -13,27 +15,51 @@ from ..utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 
+class ScraperMethod(str, Enum):
+    """Enum for scraping method selection."""
+    HTTPX = "httpx"
+    PLAYWRIGHT = "playwright"
+
+
 class Fetcher:
     """Async HTTP client with intelligent fetching."""
     
-    def __init__(self):
-        """Initialize the fetcher."""
+    def __init__(self, method: ScraperMethod = ScraperMethod.HTTPX):
+        """
+        Initialize the fetcher.
+        
+        Args:
+            method: Scraping method to use (httpx or playwright)
+        """
         settings = get_settings()
+        self.method = method
         self.timeout = settings.request_timeout
         self.user_agent = settings.user_agent
         self.rate_limit_delay = settings.rate_limit_delay
         self.robots_cache: Dict[str, RobotFileParser] = {}
         
-        # Create HTTP client
-        self.client = httpx.AsyncClient(
-            timeout=self.timeout,
-            follow_redirects=True,
-            headers={"User-Agent": self.user_agent}
-        )
+        # Initialize based on method
+        if method == ScraperMethod.PLAYWRIGHT:
+            from .playwright_fetcher import PlaywrightFetcher
+            self.playwright_fetcher = PlaywrightFetcher()
+            self.client = None
+            logger.info("Fetcher initialized with Playwright method")
+        else:
+            # Create HTTP client for httpx method
+            self.client = httpx.AsyncClient(
+                timeout=self.timeout,
+                follow_redirects=True,
+                headers={"User-Agent": self.user_agent}
+            )
+            self.playwright_fetcher = None
+            logger.info("Fetcher initialized with httpx method")
     
     async def close(self):
-        """Close the HTTP client."""
-        await self.client.aclose()
+        """Close the HTTP client or Playwright browser."""
+        if self.method == ScraperMethod.PLAYWRIGHT and self.playwright_fetcher:
+            await self.playwright_fetcher.close()
+        elif self.client:
+            await self.client.aclose()
     
     def _get_robots_url(self, url: str) -> str:
         """Get robots.txt URL for a given URL."""
@@ -102,6 +128,29 @@ class Fetcher:
         Returns:
             Dictionary with status_code, content, headers, or None on failure
         """
+        # Route to appropriate fetcher based on method
+        if self.method == ScraperMethod.PLAYWRIGHT:
+            return await self._fetch_playwright(url, respect_robots)
+        else:
+            return await self._fetch_httpx(url, retry_count, respect_robots)
+    
+    async def _fetch_httpx(
+        self,
+        url: str,
+        retry_count: int = 3,
+        respect_robots: bool = True
+    ) -> Optional[Dict[str, any]]:
+        """
+        Fetch a URL using httpx (original method).
+        
+        Args:
+            url: URL to fetch
+            retry_count: Number of retries on failure
+            respect_robots: Whether to respect robots.txt
+            
+        Returns:
+            Dictionary with status_code, content, headers, or None on failure
+        """
         # Check robots.txt
         if respect_robots:
             if not await self.can_fetch(url):
@@ -143,6 +192,30 @@ class Fetcher:
         
         logger.error(f"Failed to fetch {url} after {retry_count} attempts")
         return None
+    
+    async def _fetch_playwright(
+        self,
+        url: str,
+        respect_robots: bool = True
+    ) -> Optional[Dict[str, any]]:
+        """
+        Fetch a URL using Playwright (JavaScript-enabled).
+        
+        Args:
+            url: URL to fetch
+            respect_robots: Whether to respect robots.txt
+            
+        Returns:
+            Dictionary with status_code, content, headers, links, or None on failure
+        """
+        # Check robots.txt
+        if respect_robots:
+            if not await self.can_fetch(url):
+                logger.info(f"Robots.txt disallows fetching: {url}")
+                return None
+        
+        # Delegate to Playwright fetcher
+        return await self.playwright_fetcher.fetch(url, wait_for_network_idle=True, respect_robots=False)
     
     async def download_file(
         self,
