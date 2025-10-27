@@ -100,3 +100,38 @@ async def ai_answer(request: SearchRequest):
         logger.error(f"AI answer error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.post("/ai-answer-structured")
+async def ai_answer_structured(request: SearchRequest):
+    """
+    Get an AI-powered answer with structured data extraction.
+    Retrieves relevant content, generates a natural language answer,
+    and extracts structured data (menus, business hours, contact info, etc.).
+    """
+    try:
+        # Initialize RAG service
+        rag_service = RAGService()
+        
+        # Generate answer with structured extraction
+        result = await rag_service.answer_query(
+            query=request.query,
+            top_k=request.top_k,
+            namespace=request.namespace,
+            extract_structured=True  # Enable structured extraction
+        )
+        
+        # Log search query
+        db = get_db()
+        await db.log_search_query(
+            query_text=request.query,
+            results_count=len(result['sources']),
+            response_time_ms=result['response_time_ms']
+        )
+        
+        logger.info(f"AI answer with structured extraction: query='{request.query}', data_type={result.get('data_type', 'none')}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"AI answer structured error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+

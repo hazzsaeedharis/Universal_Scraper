@@ -6,6 +6,7 @@ import time
 
 from .retriever import Retriever
 from ..ai.groq_client import GroqClient
+from ..ai.structured_extractor import StructuredExtractor
 from ..utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -18,6 +19,7 @@ class RAGService:
         """Initialize RAG service."""
         self.retriever = Retriever()
         self.groq_client = GroqClient(model="llama-3.3-70b-versatile")
+        self.extractor = StructuredExtractor()
         logger.info("RAG service initialized")
     
     async def answer_query(
@@ -25,7 +27,8 @@ class RAGService:
         query: str,
         top_k: int = 5,
         namespace: str = "",
-        filter: Optional[Dict] = None
+        filter: Optional[Dict] = None,
+        extract_structured: bool = False
     ) -> Dict:
         """
         Generate an AI answer for a query using RAG.
@@ -35,6 +38,7 @@ class RAGService:
             top_k: Number of chunks to retrieve
             namespace: Namespace to search
             filter: Optional metadata filter
+            extract_structured: Whether to extract structured data
             
         Returns:
             Dictionary with answer, sources, and metadata
@@ -115,12 +119,25 @@ Please provide a clear, concise answer based on the context above."""
         response_time = (time.time() - start_time) * 1000
         logger.info(f"RAG query completed in {response_time:.0f}ms, {len(sources)} sources")
         
-        return {
+        result = {
             "query": query,
             "answer": answer,
             "sources": sources,
             "search_results": search_results['results'],
             "response_time_ms": response_time
         }
+        
+        # Step 5: Extract structured data if requested
+        if extract_structured:
+            extraction_result = self.extractor.extract(query, answer, context)
+            result.update({
+                "data_type": extraction_result["data_type"],
+                "confidence": extraction_result["confidence"],
+                "structured_data": extraction_result["structured_data"],
+                "has_structured_data": extraction_result["has_structured_data"]
+            })
+            logger.info(f"Structured extraction: type={extraction_result['data_type']}, success={extraction_result['has_structured_data']}")
+        
+        return result
 
 
