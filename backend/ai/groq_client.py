@@ -13,7 +13,7 @@ logger = setup_logger(__name__)
 class GroqClient:
     """Wrapper for Groq API interactions."""
     
-    def __init__(self, model: str = "llama-3.1-70b-versatile"):
+    def __init__(self, model: str = "llama-3.3-70b-versatile"):
         """
         Initialize the Groq client.
         

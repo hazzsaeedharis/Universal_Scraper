@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { search as performSearch, getSearchHistory } from '../lib/api'
+import { search as performSearch, getSearchHistory, getAIAnswer, getNamespaces } from '../lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/Card'
 import { Input } from './ui/Input'
 import { Button } from './ui/Button'
@@ -11,13 +11,15 @@ import {
   ExternalLink, 
   Clock,
   History,
-  Sparkles
+  Sparkles,
+  Brain,
+  CheckCircle2
 } from 'lucide-react'
 
 export default function Search() {
   const [query, setQuery] = useState('')
   const [topK, setTopK] = useState(10)
-  const [namespace, setNamespace] = useState('')
+  const [namespace, setNamespace] = useState('job_1')
   const [searchResults, setSearchResults] = useState(null)
   
   // Search history query
@@ -26,33 +28,64 @@ export default function Search() {
     queryFn: () => getSearchHistory(10),
   })
   
-  // Search mutation
+  // Namespaces query
+  const { data: namespacesData } = useQuery({
+    queryKey: ['namespaces'],
+    queryFn: () => getNamespaces(),
+  })
+  
+  // Auto-select first namespace if available
+  useEffect(() => {
+    if (namespacesData?.namespaces?.length > 0 && !namespace) {
+      setNamespace(namespacesData.namespaces[0].namespace)
+    }
+  }, [namespacesData, namespace])
+  
+  // Search mutation (traditional semantic search)
   const searchMutation = useMutation({
-    mutationFn: () => performSearch(query, topK, namespace),
+    mutationFn: ({ q, k, ns }) => performSearch(q, k, ns),
     onSuccess: (data) => {
       setSearchResults(data)
     },
   })
   
+  // AI answer mutation (RAG with Groq)
+  const aiAnswerMutation = useMutation({
+    mutationFn: ({ q, k, ns }) => getAIAnswer(q, k, ns),
+    onSuccess: (data) => {
+      setSearchResults({ 
+        results: data.search_results || [], 
+        count: data.search_results?.length || 0,
+        response_time_ms: data.response_time_ms
+      })
+    }
+  })
+  
   const handleSubmit = (e) => {
     e.preventDefault()
     if (query) {
-      searchMutation.mutate()
+      // Clear previous results
+      setSearchResults(null)
+      // Use AI answer by default
+      aiAnswerMutation.mutate({ q: query, k: 5, ns: namespace })
     }
   }
   
   const handleHistoryClick = (historyQuery) => {
     setQuery(historyQuery)
-    searchMutation.mutate({ query: historyQuery, topK, namespace })
+    aiAnswerMutation.mutate({ q: historyQuery, k: 5, ns: namespace })
   }
   
   return (
     <div className="max-w-5xl mx-auto space-y-8">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold">Semantic Search</h1>
+        <h1 className="text-3xl font-bold flex items-center gap-3">
+          <Brain className="w-8 h-8" />
+          AI-Powered Search
+        </h1>
         <p className="text-muted-foreground mt-1">
-          Search your scraped content using natural language
+          Ask questions and get intelligent answers from your scraped content
         </p>
       </div>
       
@@ -76,20 +109,20 @@ export default function Search() {
             <div className="flex gap-2">
               <Input
                 type="text"
-                placeholder="What are you looking for?"
+                placeholder="Ask a question about your scraped content..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                disabled={searchMutation.isPending}
+                disabled={aiAnswerMutation.isPending}
                 className="flex-1"
               />
               <Button
                 type="submit"
-                disabled={searchMutation.isPending || !query}
+                disabled={aiAnswerMutation.isPending || !query}
               >
-                {searchMutation.isPending ? (
+                {aiAnswerMutation.isPending ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
-                  <SearchIcon className="w-4 h-4" />
+                  <Brain className="w-4 h-4" />
                 )}
               </Button>
             </div>
@@ -108,24 +141,121 @@ export default function Search() {
                     max="50"
                     value={topK}
                     onChange={(e) => setTopK(parseInt(e.target.value))}
-                    disabled={searchMutation.isPending}
+                    disabled={aiAnswerMutation.isPending}
                   />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Namespace (Job ID)</label>
-                  <Input
-                    type="text"
-                    placeholder="job_123 or leave empty"
+                  <select
                     value={namespace}
                     onChange={(e) => setNamespace(e.target.value)}
-                    disabled={searchMutation.isPending}
-                  />
+                    disabled={aiAnswerMutation.isPending}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {namespacesData?.namespaces?.map((ns) => (
+                      <option key={ns.namespace} value={ns.namespace}>
+                        {ns.namespace} ({ns.vector_count.toLocaleString()} vectors)
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    Select which scraping job to search within
+                  </p>
                 </div>
               </div>
             </details>
           </form>
         </CardContent>
       </Card>
+      
+      {/* AI Answer Section */}
+      {aiAnswerMutation.isPending && (
+        <Card className="border-primary/50 bg-primary/5">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <Loader2 className="w-5 h-5 animate-spin text-primary" />
+              <div>
+                <p className="font-medium">Generating AI answer...</p>
+                <p className="text-sm text-muted-foreground">Searching content and synthesizing response</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      
+      {aiAnswerMutation.isError && (
+        <Card className="border-destructive">
+          <CardContent className="pt-6">
+            <div className="text-destructive text-sm">
+              Error: {aiAnswerMutation.error.message}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      
+      {aiAnswerMutation.data && (
+        <Card className="border-primary shadow-lg">
+          <CardHeader className="bg-gradient-to-r from-primary/10 to-primary/5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center">
+                <Brain className="w-5 h-5 text-primary-foreground" />
+              </div>
+              <div className="flex-1">
+                <CardTitle className="flex items-center gap-2">
+                  AI Answer
+                  <Badge variant="secondary" className="flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" />
+                    Powered by Groq
+                  </Badge>
+                </CardTitle>
+                <CardDescription>
+                  Generated from {aiAnswerMutation.data?.sources?.length || 0} sources in {aiAnswerMutation.data?.response_time_ms?.toFixed(0) || 0}ms
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-6">
+            {/* AI Generated Answer */}
+            <div className="prose prose-sm max-w-none mb-6">
+              <p className="text-base leading-relaxed whitespace-pre-wrap">{aiAnswerMutation.data?.answer}</p>
+            </div>
+            
+            {/* Sources */}
+            {aiAnswerMutation.data?.sources && aiAnswerMutation.data.sources.length > 0 && (
+              <div className="border-t pt-4">
+                <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <ExternalLink className="w-4 h-4" />
+                  Sources
+                </h4>
+                <div className="space-y-2">
+                  {aiAnswerMutation.data.sources.map((source, index) => (
+                    <a
+                      key={index}
+                      href={source.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-start gap-3 p-3 rounded-lg border hover:bg-accent/50 transition-colors group"
+                    >
+                      <Badge variant="outline" className="mt-0.5">
+                        {index + 1}
+                      </Badge>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm group-hover:text-primary transition-colors truncate">
+                          {source.title}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">{source.domain}</p>
+                      </div>
+                      <Badge variant="outline" className="shrink-0">
+                        {(source.score * 100).toFixed(0)}%
+                      </Badge>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
       
       {/* Search Results */}
       {searchMutation.isError && (
@@ -141,13 +271,13 @@ export default function Search() {
       {searchResults && (
         <div className="space-y-4">
           {/* Results Header */}
-          <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between">
             <div>
               <h2 className="text-xl font-semibold">
                 Search Results
               </h2>
               <p className="text-sm text-muted-foreground">
-                Found {searchResults.count} results in {searchResults.response_time_ms.toFixed(0)}ms
+                Found {searchResults.count} results in {searchResults.response_time_ms?.toFixed(0) || 0}ms
               </p>
             </div>
             <Badge variant="outline" className="flex items-center gap-1">
@@ -252,13 +382,14 @@ export default function Search() {
       )}
       
       {/* No Data Message */}
-      {!searchMutation.isPending && !searchResults && (
+      {!aiAnswerMutation.isPending && !aiAnswerMutation.data && (
         <Card>
           <CardContent className="pt-6 text-center">
-            <SearchIcon className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">Ready to Search</h3>
+            <Brain className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+            <h3 className="text-lg font-semibold mb-2">Ask Me Anything</h3>
             <p className="text-sm text-muted-foreground">
-              Enter a query above to search through your scraped content.
+              Ask questions about your scraped content and get AI-powered answers with source citations.
+              <br />
               Make sure you've scraped some websites first!
             </p>
           </CardContent>

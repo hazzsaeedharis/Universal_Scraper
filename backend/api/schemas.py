@@ -33,6 +33,7 @@ class JobStatus(BaseModel):
     job_id: int
     status: str
     job_type: str
+    name: Optional[str] = None
     query: Optional[str] = None
     start_url: Optional[str] = None
     urls_discovered: int

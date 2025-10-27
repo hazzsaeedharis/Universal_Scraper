@@ -41,6 +41,7 @@ async def list_jobs(
                 job_id=job.id,
                 status=job.status.value,
                 job_type=job.job_type.value,
+                name=job.name,
                 query=job.query,
                 start_url=job.start_url,
                 urls_discovered=job.urls_discovered,
@@ -60,6 +61,65 @@ async def list_jobs(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/namespaces")
+async def get_namespaces():
+    """
+    Get list of available namespaces (jobs) in the vector store.
+    """
+    try:
+        vector_store = VectorStore()
+        stats = vector_store.get_stats()
+        
+        namespaces = []
+        if stats.get('namespaces'):
+            for namespace, data in stats['namespaces'].items():
+                # Extract job_id from namespace (format: job_1, job_2, etc.)
+                if namespace.startswith('job_'):
+                    try:
+                        job_id = int(namespace.split('_')[1])
+                        namespaces.append({
+                            "namespace": namespace,
+                            "job_id": job_id,
+                            "vector_count": data.get('vector_count', 0)
+                        })
+                    except (IndexError, ValueError):
+                        pass
+        
+        # Sort by job_id
+        namespaces.sort(key=lambda x: x['job_id'])
+        
+        return {"namespaces": namespaces}
+        
+    except Exception as e:
+        logger.error(f"Error getting namespaces: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/{job_id}/name")
+async def update_job_name(job_id: int, name: str):
+    """
+    Update the name of a job.
+    """
+    try:
+        db = get_db()
+        
+        # Check if job exists
+        job = await db.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Update the name
+        await db.update_job_name(job_id, name)
+        
+        return {"message": f"Job {job_id} name updated successfully", "name": name}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating job name: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{job_id}", response_model=JobStatusSchema)
 async def get_job(job_id: int):
     """
@@ -76,6 +136,7 @@ async def get_job(job_id: int):
             job_id=job.id,
             status=job.status.value,
             job_type=job.job_type.value,
+            name=job.name,
             query=job.query,
             start_url=job.start_url,
             urls_discovered=job.urls_discovered,

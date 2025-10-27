@@ -129,6 +129,8 @@ async def process_scraped_data_to_rag(job_id: int, domain: str):
         
         # Process each scraped URL
         vectors = []
+        url_chunk_counts = {}  # Track chunks per URL
+        
         for scraped_url in scraped_urls:
             if scraped_url.local_path:
                 try:
@@ -144,6 +146,9 @@ async def process_scraped_data_to_rag(job_id: int, domain: str):
                             'domain': scraped_url.domain
                         }
                     )
+                    
+                    # Track chunk count for this URL
+                    url_chunk_counts[scraped_url.id] = len(chunks)
                     
                     # Generate embeddings
                     texts = [chunk['text'] for chunk in chunks]
@@ -162,6 +167,12 @@ async def process_scraped_data_to_rag(job_id: int, domain: str):
                         }
                         vectors.append((vector_id, embedding, metadata))
                     
+                    # Update database to mark URL as processed
+                    await db.mark_url_as_embedded(
+                        url_id=scraped_url.id,
+                        chunks_generated=len(chunks)
+                    )
+                    
                 except Exception as e:
                     logger.error(f"Error processing {scraped_url.url}: {e}")
         
@@ -169,6 +180,10 @@ async def process_scraped_data_to_rag(job_id: int, domain: str):
         if vectors:
             vector_store.upsert_vectors(vectors, namespace=f"job_{job_id}")
             logger.info(f"Upserted {len(vectors)} vectors for job {job_id}")
+            
+            # Update job with total chunks
+            total_chunks = sum(url_chunk_counts.values())
+            await db.update_job_chunks(job_id, total_chunks)
         
     except Exception as e:
         logger.error(f"Error processing scraped data to RAG: {e}")
