@@ -46,4 +46,4 @@ aiofiles
 pytest
 pytest-asyncio
 black
-
+playwright

@@ -38,7 +38,6 @@ class ScrapeJob(Base):
     name = Column(String(255), nullable=True)  # Custom job name
     query = Column(Text, nullable=True)  # For smart scraping
     start_url = Column(String(500), nullable=True)  # For direct scraping
-    scraper_method = Column(String(20), default="httpx", nullable=False)  # httpx or playwright
     
     # Progress tracking
     urls_discovered = Column(Integer, default=0)

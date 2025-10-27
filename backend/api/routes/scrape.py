@@ -221,8 +221,7 @@ async def direct_scrape(
     db = get_db()
     job = await db.create_job(
         job_type=JobType.DIRECT,
-        start_url=request.url,
-        scraper_method=scraper_method
+        start_url=request.url
     )
     
     logger.info(f"Starting direct scrape job {job.id} with {scraper_method} method")
@@ -310,8 +309,7 @@ async def smart_scrape(
     db = get_db()
     job = await db.create_job(
         job_type=JobType.SMART,
-        query=request.query,
-        scraper_method=scraper_method
+        query=request.query
     )
     
     logger.info(f"Starting smart scrape job {job.id} with {scraper_method} method")
