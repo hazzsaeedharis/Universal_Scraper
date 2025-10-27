@@ -170,7 +170,8 @@ class Fetcher:
                         "status_code": response.status_code,
                         "content": response.text,
                         "headers": dict(response.headers),
-                        "url": str(response.url)  # Final URL after redirects
+                        "url": str(response.url),  # Final URL after redirects
+                        "pdf_links": []  # httpx doesn't detect PDF links (no JS execution)
                     }
                 else:
                     logger.warning(f"HTTP {response.status_code} for {url}")

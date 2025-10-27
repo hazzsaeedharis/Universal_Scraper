@@ -159,6 +159,14 @@ class Crawler:
                     if link not in self.visited:
                         self.queue.append((link, depth + 1))
         
+        # Add PDF links to queue (from Playwright detection)
+        # PDFs found by Playwright should be processed even if not at max depth
+        if response.get('pdf_links') and self.pdf_enabled:
+            for pdf_link in response['pdf_links']:
+                if pdf_link not in self.visited and is_same_domain(pdf_link, self.start_url):
+                    logger.info(f"Queuing detected PDF: {pdf_link}")
+                    self.queue.append((pdf_link, depth + 1))
+        
         return {
             "url": url,
             "final_url": response['url'],
