@@ -1,9 +1,10 @@
 """
 PDF Processing with OCR fallback for menu extraction.
-Multi-layer strategy: pdfplumber → PyPDF2 → OCR (pytesseract)
+Multi-layer strategy: Vision API → pdfplumber → PyPDF2 → OCR (pytesseract)
 """
 import os
 import tempfile
+import base64
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
@@ -18,6 +19,7 @@ except ImportError:
     PDF_SUPPORT = False
 
 from ..utils.logger import setup_logger
+from ..config import get_settings
 
 logger = setup_logger(__name__)
 
@@ -45,9 +47,24 @@ class PDFProcessor:
                 "Install with: pip install PyPDF2 pdfplumber pytesseract pdf2image Pillow"
             )
         
+        self.settings = get_settings()
         self.max_pages = max_pages
         self.max_size_mb = max_size_mb
         self.ocr_languages = ocr_languages
+        self.use_vision = self.settings.use_vision_for_pdfs
+        
+        # Initialize Groq client for vision if enabled
+        if self.use_vision:
+            try:
+                from ..ai.groq_client import GroqClient
+                self.groq_client = GroqClient()
+                logger.info(f"🔍 Vision-based PDF extraction enabled (model: {self.settings.vision_model})")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Groq vision: {e}, falling back to OCR")
+                self.use_vision = False
+                self.groq_client = None
+        else:
+            self.groq_client = None
         
         # Test if tesseract is available
         try:
@@ -232,9 +249,137 @@ class PDFProcessor:
             logger.warning(f"Image preprocessing failed: {e}")
             return image
     
+    def _pdf_to_images(self, pdf_path: str) -> List[Image.Image]:
+        """
+        Convert PDF pages to PIL Images.
+        
+        Args:
+            pdf_path: Path to PDF file
+            
+        Returns:
+            List of PIL Images, one per page
+        """
+        try:
+            images = pdf2image.convert_from_path(
+                pdf_path,
+                dpi=200,  # Good quality for vision API
+                first_page=1,
+                last_page=min(self.max_pages, 100)  # Safety limit
+            )
+            logger.info(f"Converted PDF to {len(images)} images")
+            return images
+        except Exception as e:
+            logger.error(f"Failed to convert PDF to images: {e}")
+            return []
+    
+    def _image_to_base64(self, image: Image.Image) -> str:
+        """
+        Convert PIL Image to base64 string.
+        
+        Args:
+            image: PIL Image
+            
+        Returns:
+            Base64 encoded string
+        """
+        import io
+        buffer = io.BytesIO()
+        # Convert to RGB if needed
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        # Save as JPEG (smaller than PNG)
+        image.save(buffer, format='JPEG', quality=85)
+        img_bytes = buffer.getvalue()
+        return base64.b64encode(img_bytes).decode('utf-8')
+    
+    def _extract_with_vision(self, pdf_path: str) -> str:
+        """
+        Extract text from PDF using Groq vision API.
+        
+        Args:
+            pdf_path: Path to PDF file
+            
+        Returns:
+            Extracted text from all pages
+        """
+        if not self.use_vision or not self.groq_client:
+            return ""
+        
+        try:
+            # Convert PDF to images
+            images = self._pdf_to_images(pdf_path)
+            if not images:
+                logger.warning("No images extracted from PDF")
+                return ""
+            
+            # Process each page with vision API
+            all_text = []
+            for i, image in enumerate(images, 1):
+                logger.info(f"Processing page {i}/{len(images)} with vision API...")
+                
+                # Convert to base64
+                base64_image = self._image_to_base64(image)
+                
+                # Prepare prompt for menu extraction
+                prompt = """Extract ALL text from this image in a structured format. 
+
+If this is a menu:
+- List all items with names and prices
+- Include sections/categories (Appetizers, Mains, Desserts, Drinks, etc.)
+- Preserve the order and structure
+- Note any special annotations (vegan, gluten-free, spicy, etc.)
+
+If this is not a menu, extract all visible text accurately.
+
+Be thorough and precise."""
+                
+                # Send to Groq vision API
+                try:
+                    from groq import Groq
+                    client = Groq(api_key=self.settings.groq_api_key)
+                    
+                    completion = client.chat.completions.create(
+                        model=self.settings.vision_model,
+                        messages=[{
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{base64_image}"
+                                    }
+                                }
+                            ]
+                        }],
+                        temperature=0.1,  # Low temperature for accurate extraction
+                        max_tokens=2000
+                    )
+                    
+                    page_text = completion.choices[0].message.content
+                    all_text.append(f"--- Page {i} ---\n{page_text}\n")
+                    logger.info(f"✅ Page {i} extracted via vision API ({len(page_text)} chars)")
+                    
+                except Exception as e:
+                    logger.error(f"Vision API error for page {i}: {e}")
+                    continue
+            
+            if all_text:
+                combined_text = "\n".join(all_text)
+                logger.info(f"🔍 Vision extraction complete: {len(combined_text)} total characters")
+                return combined_text
+            else:
+                logger.warning("Vision extraction failed for all pages")
+                return ""
+                
+        except Exception as e:
+            logger.error(f"Vision extraction failed: {e}")
+            return ""
+    
     def extract_full_text(self, pdf_path: str) -> str:
         """
         Extract all text from PDF as a single string.
+        Uses vision API first (if enabled), falls back to OCR methods.
         
         Args:
             pdf_path: Path to PDF file
@@ -242,6 +387,15 @@ class PDFProcessor:
         Returns:
             Combined text from all pages
         """
+        # Try vision extraction first (best accuracy)
+        if self.use_vision:
+            logger.info("Attempting vision-based extraction...")
+            vision_text = self._extract_with_vision(pdf_path)
+            if vision_text:
+                return vision_text
+            logger.warning("Vision extraction failed, falling back to traditional methods")
+        
+        # Fallback to traditional OCR methods
         pages = self.extract_text_from_pdf(pdf_path)
         
         if not pages:

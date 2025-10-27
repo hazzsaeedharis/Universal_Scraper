@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     pdf_max_pages: int = 20
     enable_ocr: bool = True
     ocr_languages: str = "eng+deu+fra+spa"
+    use_vision_for_pdfs: bool = True  # Use Groq vision models for better PDF extraction
+    vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"  # Groq vision model
     
     # Playwright Configuration
     enable_playwright: bool = True
