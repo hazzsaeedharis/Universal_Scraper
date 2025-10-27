@@ -36,7 +36,11 @@ class Fetcher:
         self.timeout = settings.request_timeout
         self.user_agent = settings.user_agent
         self.rate_limit_delay = settings.rate_limit_delay
+        self.respect_robots = settings.respect_robots_txt
         self.robots_cache: Dict[str, RobotFileParser] = {}
+        
+        if not self.respect_robots:
+            logger.info("⚠️  robots.txt checking is DISABLED (testing mode)")
         
         # Always create an httpx client (needed for file downloads even with Playwright)
         self.client = httpx.AsyncClient(
@@ -118,7 +122,7 @@ class Fetcher:
         self,
         url: str,
         retry_count: int = 3,
-        respect_robots: bool = True
+        respect_robots: bool = None
     ) -> Optional[Dict[str, any]]:
         """
         Fetch a URL with retry logic.
@@ -126,11 +130,15 @@ class Fetcher:
         Args:
             url: URL to fetch
             retry_count: Number of retries on failure
-            respect_robots: Whether to respect robots.txt
+            respect_robots: Whether to respect robots.txt (None = use global setting)
             
         Returns:
             Dictionary with status_code, content, headers, or None on failure
         """
+        # Use global setting if not explicitly provided
+        if respect_robots is None:
+            respect_robots = self.respect_robots
+            
         # Route to appropriate fetcher based on method
         if self.method == ScraperMethod.PLAYWRIGHT:
             return await self._fetch_playwright(url, respect_robots)
@@ -225,7 +233,7 @@ class Fetcher:
         self,
         url: str,
         save_path: str,
-        respect_robots: bool = True
+        respect_robots: bool = None
     ) -> bool:
         """
         Download a binary file (like PDF) from URL.
@@ -233,11 +241,15 @@ class Fetcher:
         Args:
             url: URL to download
             save_path: Local path to save the file
-            respect_robots: Whether to respect robots.txt
+            respect_robots: Whether to respect robots.txt (None = use global setting)
             
         Returns:
             True if successful, False otherwise
         """
+        # Use global setting if not explicitly provided
+        if respect_robots is None:
+            respect_robots = self.respect_robots
+            
         # Check robots.txt
         if respect_robots:
             if not await self.can_fetch(url):

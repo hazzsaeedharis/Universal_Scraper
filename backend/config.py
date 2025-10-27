@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     request_timeout: int = 30
     rate_limit_delay: float = 1.0
     user_agent: str = "UniversalScraper/1.0"
+    respect_robots_txt: bool = False  # Set to False for testing, True for production
     
     # RAG Configuration
     embedding_model: str = "all-MiniLM-L6-v2"
