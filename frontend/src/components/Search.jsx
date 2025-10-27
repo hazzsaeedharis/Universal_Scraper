@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Input } from './ui/Input'
 import { Button } from './ui/Button'
 import { Badge } from './ui/Badge'
+import StructuredDataViewer from './StructuredDataViewer'
 import { 
   Search as SearchIcon, 
   Loader2, 
@@ -255,6 +256,15 @@ export default function Search() {
             )}
           </CardContent>
         </Card>
+      )}
+      
+      {/* Structured Data Viewer */}
+      {aiAnswerMutation.data?.has_structured_data && (
+        <StructuredDataViewer
+          data={aiAnswerMutation.data.structured_data}
+          dataType={aiAnswerMutation.data.data_type}
+          confidence={aiAnswerMutation.data.confidence || 0}
+        />
       )}
       
       {/* Search Results */}
