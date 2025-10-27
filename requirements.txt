@@ -10,6 +10,15 @@ lxml
 playwright
 urllib3
 
+# PDF Processing & OCR
+PyPDF2
+pdfplumber
+pytesseract
+pdf2image
+Pillow
+# Note: Requires system packages: tesseract-ocr, poppler-utils
+# Install with: brew install tesseract poppler (macOS) or apt-get install tesseract-ocr poppler-utils (Linux)
+
 # AI & Embeddings
 groq
 sentence-transformers

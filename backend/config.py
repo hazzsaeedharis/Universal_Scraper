@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     chunk_overlap: int = 50
     top_k_results: int = 10
     
+    # PDF Processing Configuration
+    enable_pdf_scraping: bool = True
+    pdf_max_size_mb: int = 50
+    pdf_max_pages: int = 20
+    enable_ocr: bool = True
+    ocr_languages: str = "eng+deu+fra+spa"
+    
     # Server Configuration
     host: str = "0.0.0.0"
     port: int = 8000

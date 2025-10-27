@@ -144,6 +144,50 @@ class Fetcher:
         logger.error(f"Failed to fetch {url} after {retry_count} attempts")
         return None
     
+    async def download_file(
+        self,
+        url: str,
+        save_path: str,
+        respect_robots: bool = True
+    ) -> bool:
+        """
+        Download a binary file (like PDF) from URL.
+        
+        Args:
+            url: URL to download
+            save_path: Local path to save the file
+            respect_robots: Whether to respect robots.txt
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        # Check robots.txt
+        if respect_robots:
+            if not await self.can_fetch(url):
+                logger.info(f"Robots.txt disallows downloading: {url}")
+                return False
+        
+        # Rate limiting
+        await asyncio.sleep(self.rate_limit_delay)
+        
+        try:
+            response = await self.client.get(url)
+            
+            if response.status_code == 200:
+                # Write binary content to file
+                with open(save_path, 'wb') as f:
+                    f.write(response.content)
+                
+                logger.info(f"Downloaded {url} to {save_path}")
+                return True
+            else:
+                logger.warning(f"HTTP {response.status_code} for {url}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error downloading {url}: {e}")
+            return False
+    
     async def fetch_multiple(
         self,
         urls: list,
