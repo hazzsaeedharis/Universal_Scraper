@@ -376,10 +376,49 @@ Be thorough and precise."""
             logger.error(f"Vision extraction failed: {e}")
             return ""
     
+    def _is_text_extraction_good(self, text: str, page_count: int) -> bool:
+        """
+        Check if text extraction was successful.
+        
+        Args:
+            text: Extracted text
+            page_count: Number of pages processed
+            
+        Returns:
+            True if text extraction is good quality
+        """
+        if not text or len(text) < 100:
+            return False
+        
+        # Check average characters per page
+        avg_chars_per_page = len(text) / max(page_count, 1)
+        
+        # If less than 50 chars per page, likely scanned/poor extraction
+        if avg_chars_per_page < 50:
+            logger.info(f"Low text density ({avg_chars_per_page:.0f} chars/page), likely scanned PDF")
+            return False
+        
+        # Check for gibberish (too many special characters)
+        import re
+        alphanumeric = len(re.findall(r'[a-zA-Z0-9]', text))
+        special = len(re.findall(r'[^a-zA-Z0-9\s]', text))
+        
+        if special > alphanumeric * 0.5:  # More than 50% special chars
+            logger.info("High special character ratio, likely poor extraction")
+            return False
+        
+        logger.info(f"Text extraction looks good ({avg_chars_per_page:.0f} chars/page)")
+        return True
+    
     def extract_full_text(self, pdf_path: str) -> str:
         """
         Extract all text from PDF as a single string.
-        Uses vision API first (if enabled), falls back to OCR methods.
+        Smart extraction: tries text methods first, vision API for scanned PDFs.
+        
+        Strategy:
+        1. Try pdfplumber/PyPDF2 (fast, free)
+        2. If text extraction is poor quality → use vision API
+        3. OCR as final fallback (if vision unavailable)
         
         Args:
             pdf_path: Path to PDF file
@@ -387,31 +426,50 @@ Be thorough and precise."""
         Returns:
             Combined text from all pages
         """
-        # Try vision extraction first (best accuracy)
-        if self.use_vision:
-            logger.info("Attempting vision-based extraction...")
-            vision_text = self._extract_with_vision(pdf_path)
-            if vision_text:
-                return vision_text
-            logger.warning("Vision extraction failed, falling back to traditional methods")
-        
-        # Fallback to traditional OCR methods
+        # Step 1: Try traditional text extraction first (fast & free)
+        logger.info("Attempting text extraction (pdfplumber/PyPDF2)...")
         pages = self.extract_text_from_pdf(pdf_path)
         
-        if not pages:
-            return ""
+        if pages:
+            # Combine text to check quality
+            text_parts = []
+            for page in pages:
+                text_parts.append(f"--- Page {page['page_num']} ---")
+                text_parts.append(page['text'])
+                text_parts.append("")
+            
+            full_text = "\n".join(text_parts)
+            
+            # Check if text extraction was good
+            if self._is_text_extraction_good(full_text, len(pages)):
+                logger.info(f"✅ Text extraction successful: {len(pages)} pages, {len(full_text)} chars")
+                return full_text
+            else:
+                logger.warning("⚠️  Text extraction poor quality, trying vision API...")
+        else:
+            logger.warning("⚠️  Text extraction failed, trying vision API...")
         
-        # Combine all page texts
-        text_parts = []
-        for page in pages:
-            text_parts.append(f"--- Page {page['page_num']} ---")
-            text_parts.append(page['text'])
-            text_parts.append("")  # Empty line between pages
+        # Step 2: Use vision API for scanned/poor quality PDFs
+        if self.use_vision:
+            logger.info("Using vision API for better extraction...")
+            vision_text = self._extract_with_vision(pdf_path)
+            if vision_text:
+                logger.info(f"✅ Vision extraction successful: {len(vision_text)} chars")
+                return vision_text
+            logger.warning("Vision extraction failed")
         
-        full_text = "\n".join(text_parts)
+        # Step 3: If we got here, return whatever text we have (even if poor quality)
+        if pages:
+            logger.warning("⚠️  Returning poor-quality text extraction (vision unavailable)")
+            text_parts = []
+            for page in pages:
+                text_parts.append(f"--- Page {page['page_num']} ---")
+                text_parts.append(page['text'])
+                text_parts.append("")
+            return "\n".join(text_parts)
         
-        logger.info(f"Extracted {len(pages)} pages, total {len(full_text)} characters")
-        return full_text
+        logger.error("All extraction methods failed")
+        return ""
     
     def is_menu_pdf(self, text: str) -> bool:
         """
