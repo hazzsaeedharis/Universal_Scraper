@@ -2,12 +2,16 @@
 Domain crawler that follows internal links recursively.
 """
 import asyncio
+import os
+import tempfile
+import hashlib
 from typing import Set, List, Optional, Callable
 from urllib.parse import urlparse
 from collections import deque
 
 from .fetcher import Fetcher
 from .parser import Parser
+from .pdf_processor import PDFProcessor, PDF_SUPPORT
 from ..config import get_settings
 from ..utils.logger import setup_logger
 from ..utils.validators import is_same_domain, normalize_url
@@ -50,6 +54,20 @@ class Crawler:
         # Components
         self.fetcher = Fetcher()
         self.parser = Parser()
+        
+        # PDF processing (if enabled and available)
+        self.pdf_enabled = settings.enable_pdf_scraping and PDF_SUPPORT
+        if self.pdf_enabled:
+            self.pdf_processor = PDFProcessor(
+                max_pages=settings.pdf_max_pages,
+                max_size_mb=settings.pdf_max_size_mb,
+                ocr_languages=settings.ocr_languages
+            )
+            logger.info("PDF processing enabled")
+        else:
+            self.pdf_processor = None
+            if settings.enable_pdf_scraping and not PDF_SUPPORT:
+                logger.warning("PDF processing requested but dependencies not installed")
     
     async def crawl(self) -> dict:
         """
@@ -76,9 +94,14 @@ class Crawler:
             # Mark as visited
             self.visited.add(url)
             
-            # Fetch the page
+            # Process the URL (PDF or regular page)
             try:
-                result = await self._crawl_page(url, depth)
+                # Check if it's a PDF
+                if self._is_pdf_url(url):
+                    result = await self._process_pdf(url, depth)
+                else:
+                    result = await self._crawl_page(url, depth)
+                
                 if result:
                     pages_crawled += 1
                     
@@ -89,7 +112,7 @@ class Crawler:
                         except Exception as e:
                             logger.error(f"Callback error for {url}: {e}")
             except Exception as e:
-                logger.error(f"Error crawling {url}: {e}")
+                logger.error(f"Error processing {url}: {e}")
                 self.failed.append({"url": url, "error": str(e), "depth": depth})
         
         await self.fetcher.close()
@@ -143,6 +166,82 @@ class Crawler:
             "word_count": parsed['word_count'],
             "status_code": response['status_code']
         }
+    
+    def _is_pdf_url(self, url: str) -> bool:
+        """Check if URL likely points to a PDF."""
+        return url.lower().endswith('.pdf')
+    
+    async def _process_pdf(self, url: str, depth: int) -> Optional[dict]:
+        """
+        Download and process a PDF file.
+        
+        Args:
+            url: PDF URL
+            depth: Current depth
+            
+        Returns:
+            Dictionary with PDF data or None on failure
+        """
+        if not self.pdf_enabled or not self.pdf_processor:
+            logger.warning(f"PDF processing disabled, skipping {url}")
+            return None
+        
+        logger.info(f"Processing PDF: {url}")
+        
+        # Create temporary file for download
+        url_hash = hashlib.md5(url.encode()).hexdigest()[:16]
+        temp_path = os.path.join(tempfile.gettempdir(), f"pdf_{url_hash}.pdf")
+        
+        try:
+            # Download PDF
+            success = await self.fetcher.download_file(url, temp_path)
+            if not success:
+                self.failed.append({"url": url, "error": "Download failed", "depth": depth})
+                return None
+            
+            # Extract text from PDF
+            extracted_text = self.pdf_processor.extract_full_text(temp_path)
+            
+            if not extracted_text:
+                logger.warning(f"No text extracted from PDF: {url}")
+                self.failed.append({"url": url, "error": "Text extraction failed", "depth": depth})
+                return None
+            
+            # Check if it's a menu
+            is_menu = self.pdf_processor.is_menu_pdf(extracted_text)
+            
+            logger.info(f"✅ PDF processed: {len(extracted_text)} chars, is_menu={is_menu}")
+            
+            return {
+                "url": url,
+                "final_url": url,
+                "depth": depth,
+                "title": f"PDF: {os.path.basename(urlparse(url).path)}",
+                "text": extracted_text,
+                "html": "",  # No HTML for PDFs
+                "links": [],  # Could extract URLs from PDF text if needed
+                "metadata": {
+                    "content_type": "application/pdf",
+                    "is_menu": is_menu
+                },
+                "word_count": len(extracted_text.split()),
+                "status_code": 200,
+                "content_type": "pdf"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing PDF {url}: {e}")
+            self.failed.append({"url": url, "error": str(e), "depth": depth})
+            return None
+        
+        finally:
+            # Clean up temporary file
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                    logger.debug(f"Removed temporary PDF: {temp_path}")
+                except Exception as e:
+                    logger.warning(f"Could not remove temp file {temp_path}: {e}")
     
     def get_stats(self) -> dict:
         """Get crawl statistics."""
