@@ -86,7 +86,6 @@ class ScrapedURL(Base):
     # Processing
     chunks_generated = Column(Integer, default=0)
     embedded = Column(Integer, default=0)  # Boolean as int (0 or 1)
-    ocr_processed = Column(Integer, default=0)  # Boolean as int (0 or 1) - for PDFs
 
 
 class SearchQuery(Base):
